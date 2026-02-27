@@ -35,7 +35,7 @@ export const LoginForm = ({ onToggleMode }: LoginFormProps) => {
         return;
       }
       
-      if (data.user) {
+      if (data?.user) {
         setAuth(
           data.user.id,
           data.user.user_metadata?.username || data.user.email?.split('@')[0] || 'Player',

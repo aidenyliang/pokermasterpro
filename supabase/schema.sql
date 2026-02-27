@@ -1,10 +1,14 @@
--- PokerMaster Pro Database Schema
--- Run this in your Supabase SQL Editor
+-- PokerMaster Pro - Complete Database Schema
+-- Run this entire file in your Supabase SQL Editor
 
--- Enable UUID extension
+-- ============================================
+-- EXTENSIONS
+-- ============================================
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Profiles table (extends auth.users)
+-- ============================================
+-- PROFILES TABLE (extends auth.users)
+-- ============================================
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   username TEXT NOT NULL UNIQUE,
@@ -13,7 +17,22 @@ CREATE TABLE IF NOT EXISTS profiles (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Player statistics
+-- Enable RLS
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+CREATE POLICY "Profiles are viewable by everyone" 
+  ON profiles FOR SELECT USING (true);
+
+CREATE POLICY "Users can update own profile" 
+  ON profiles FOR UPDATE USING (auth.uid() = id);
+
+CREATE POLICY "Users can insert own profile" 
+  ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+-- ============================================
+-- PLAYER STATS TABLE
+-- ============================================
 CREATE TABLE IF NOT EXISTS player_stats (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   username TEXT NOT NULL,
@@ -27,10 +46,10 @@ CREATE TABLE IF NOT EXISTS player_stats (
   net_profit DECIMAL(15, 2) DEFAULT 0,
   biggest_pot_won DECIMAL(15, 2) DEFAULT 0,
   best_hand JSONB,
-  vpip DECIMAL(5, 2) DEFAULT 0, -- Voluntarily Put $ In Pot
-  pfr DECIMAL(5, 2) DEFAULT 0, -- Pre-Flop Raise
-  af DECIMAL(5, 2) DEFAULT 0, -- Aggression Factor
-  bb_per_100 DECIMAL(8, 2) DEFAULT 0, -- Big Blinds per 100 hands
+  vpip DECIMAL(5, 2) DEFAULT 0,
+  pfr DECIMAL(5, 2) DEFAULT 0,
+  af DECIMAL(5, 2) DEFAULT 0,
+  bb_per_100 DECIMAL(8, 2) DEFAULT 0,
   win_rate DECIMAL(5, 2) DEFAULT 0,
   current_streak INTEGER DEFAULT 0,
   longest_win_streak INTEGER DEFAULT 0,
@@ -41,7 +60,16 @@ CREATE TABLE IF NOT EXISTS player_stats (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Game rooms
+-- Enable RLS
+ALTER TABLE player_stats ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+CREATE POLICY "Player stats are viewable by everyone" 
+  ON player_stats FOR SELECT USING (true);
+
+-- ============================================
+-- GAME ROOMS TABLE
+-- ============================================
 CREATE TABLE IF NOT EXISTS game_rooms (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
@@ -62,7 +90,25 @@ CREATE TABLE IF NOT EXISTS game_rooms (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Game states (realtime)
+-- Enable RLS
+ALTER TABLE game_rooms ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+CREATE POLICY "Game rooms are viewable by everyone" 
+  ON game_rooms FOR SELECT USING (true);
+
+CREATE POLICY "Users can create rooms" 
+  ON game_rooms FOR INSERT WITH CHECK (auth.uid() = host_id);
+
+CREATE POLICY "Host can update their rooms" 
+  ON game_rooms FOR UPDATE USING (auth.uid() = host_id);
+
+CREATE POLICY "Host can delete their rooms" 
+  ON game_rooms FOR DELETE USING (auth.uid() = host_id);
+
+-- ============================================
+-- GAME STATES TABLE (realtime)
+-- ============================================
 CREATE TABLE IF NOT EXISTS game_states (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   room_id UUID NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE,
@@ -70,7 +116,7 @@ CREATE TABLE IF NOT EXISTS game_states (
   community_cards JSONB NOT NULL DEFAULT '[]',
   deck JSONB NOT NULL DEFAULT '[]',
   pots JSONB NOT NULL DEFAULT '[]',
-  current_round TEXT DEFAULT 'preflop' CHECK (current_round IN ('preflop', 'flop', 'turn', 'river', 'showdown')),
+  current_round TEXT DEFAULT 'preflop',
   current_position INTEGER DEFAULT 0,
   dealer_position INTEGER DEFAULT 0,
   small_blind INTEGER DEFAULT 10,
@@ -78,7 +124,7 @@ CREATE TABLE IF NOT EXISTS game_states (
   ante INTEGER DEFAULT 0,
   min_bet INTEGER DEFAULT 20,
   max_bet DECIMAL(15, 2) DEFAULT 999999999,
-  game_phase TEXT DEFAULT 'waiting' CHECK (game_phase IN ('waiting', 'dealing', 'betting', 'dealing_community', 'showdown', 'finished')),
+  game_phase TEXT DEFAULT 'waiting',
   actions JSONB NOT NULL DEFAULT '[]',
   last_raise_amount INTEGER DEFAULT 0,
   hand_number INTEGER DEFAULT 1,
@@ -90,7 +136,25 @@ CREATE TABLE IF NOT EXISTS game_states (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Hand history
+-- Enable RLS
+ALTER TABLE game_states ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+CREATE POLICY "Game states are viewable by everyone" 
+  ON game_states FOR SELECT USING (true);
+
+CREATE POLICY "Host can modify game state" 
+  ON game_states FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM game_rooms 
+      WHERE game_rooms.id = game_states.room_id 
+      AND game_rooms.host_id = auth.uid()
+    )
+  );
+
+-- ============================================
+-- HAND HISTORY TABLE
+-- ============================================
 CREATE TABLE IF NOT EXISTS hand_history (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   game_id UUID NOT NULL REFERENCES game_states(id) ON DELETE CASCADE,
@@ -106,7 +170,16 @@ CREATE TABLE IF NOT EXISTS hand_history (
   big_blind INTEGER NOT NULL
 );
 
--- Chat messages
+-- Enable RLS
+ALTER TABLE hand_history ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+CREATE POLICY "Hand history is viewable by everyone" 
+  ON hand_history FOR SELECT USING (true);
+
+-- ============================================
+-- CHAT MESSAGES TABLE
+-- ============================================
 CREATE TABLE IF NOT EXISTS chat_messages (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   room_id UUID NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE,
@@ -117,17 +190,29 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   type TEXT DEFAULT 'player' CHECK (type IN ('player', 'system', 'dealer'))
 );
 
--- User preferences
+-- Enable RLS
+ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+CREATE POLICY "Chat messages are viewable by everyone" 
+  ON chat_messages FOR SELECT USING (true);
+
+CREATE POLICY "Users can send messages" 
+  ON chat_messages FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- ============================================
+-- USER PREFERENCES TABLE
+-- ============================================
 CREATE TABLE IF NOT EXISTS user_preferences (
   user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  graphics_quality TEXT DEFAULT 'high' CHECK (graphics_quality IN ('low', 'medium', 'high', 'ultra')),
+  graphics_quality TEXT DEFAULT 'high',
   animations_enabled BOOLEAN DEFAULT TRUE,
   sound_enabled BOOLEAN DEFAULT TRUE,
   sound_volume DECIMAL(3, 2) DEFAULT 0.7,
   music_enabled BOOLEAN DEFAULT TRUE,
   music_volume DECIMAL(3, 2) DEFAULT 0.5,
-  card_design TEXT DEFAULT 'modern' CHECK (card_design IN ('classic', 'modern', 'minimal', 'dark', 'gold')),
-  table_color TEXT DEFAULT 'green' CHECK (table_color IN ('green', 'blue', 'red', 'black', 'purple')),
+  card_design TEXT DEFAULT 'modern',
+  table_color TEXT DEFAULT 'green',
   auto_muck BOOLEAN DEFAULT TRUE,
   show_folded_cards BOOLEAN DEFAULT FALSE,
   four_color_deck BOOLEAN DEFAULT FALSE,
@@ -140,7 +225,19 @@ CREATE TABLE IF NOT EXISTS user_preferences (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Tournaments
+-- Enable RLS
+ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies
+CREATE POLICY "Users can view own preferences" 
+  ON user_preferences FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own preferences" 
+  ON user_preferences FOR ALL USING (auth.uid() = user_id);
+
+-- ============================================
+-- TOURNAMENTS TABLE
+-- ============================================
 CREATE TABLE IF NOT EXISTS tournaments (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
@@ -152,93 +249,16 @@ CREATE TABLE IF NOT EXISTS tournaments (
   blind_levels JSONB NOT NULL DEFAULT '[]',
   max_players INTEGER NOT NULL DEFAULT 100,
   registered_players UUID[] DEFAULT '{}',
-  status TEXT DEFAULT 'registering' CHECK (status IN ('registering', 'starting', 'running', 'paused', 'finished')),
+  status TEXT DEFAULT 'registering',
   started_at TIMESTAMP WITH TIME ZONE,
   finished_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_game_rooms_status ON game_rooms(status);
-CREATE INDEX IF NOT EXISTS idx_game_rooms_host ON game_rooms(host_id);
-CREATE INDEX IF NOT EXISTS idx_game_states_room ON game_states(room_id);
-CREATE INDEX IF NOT EXISTS idx_hand_history_game ON hand_history(game_id);
-CREATE INDEX IF NOT EXISTS idx_hand_history_room ON hand_history(room_id);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_room ON chat_messages(room_id);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestamp);
-CREATE INDEX IF NOT EXISTS idx_player_stats_username ON player_stats(username);
-
--- Enable Row Level Security (RLS)
-ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE player_stats ENABLE ROW LEVEL SECURITY;
-ALTER TABLE game_rooms ENABLE ROW LEVEL SECURITY;
-ALTER TABLE game_states ENABLE ROW LEVEL SECURITY;
-ALTER TABLE hand_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
-ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
+-- Enable RLS
 ALTER TABLE tournaments ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies
-
--- Profiles: Users can read all profiles, update only their own
-CREATE POLICY "Profiles are viewable by everyone" 
-  ON profiles FOR SELECT USING (true);
-
-CREATE POLICY "Users can update own profile" 
-  ON profiles FOR UPDATE USING (auth.uid() = id);
-
-CREATE POLICY "Users can insert own profile" 
-  ON profiles FOR INSERT WITH CHECK (auth.uid() = id);
-
--- Player stats: Viewable by everyone, updated by system
-CREATE POLICY "Player stats are viewable by everyone" 
-  ON player_stats FOR SELECT USING (true);
-
--- Game rooms: Viewable by everyone, modifiable by host
-CREATE POLICY "Game rooms are viewable by everyone" 
-  ON game_rooms FOR SELECT USING (true);
-
-CREATE POLICY "Users can create rooms" 
-  ON game_rooms FOR INSERT WITH CHECK (auth.uid() = host_id);
-
-CREATE POLICY "Host can update their rooms" 
-  ON game_rooms FOR UPDATE USING (auth.uid() = host_id);
-
-CREATE POLICY "Host can delete their rooms" 
-  ON game_rooms FOR DELETE USING (auth.uid() = host_id);
-
--- Game states: Viewable by everyone in room
-CREATE POLICY "Game states are viewable by everyone" 
-  ON game_states FOR SELECT USING (true);
-
-CREATE POLICY "Host can modify game state" 
-  ON game_states FOR ALL USING (
-    EXISTS (
-      SELECT 1 FROM game_rooms 
-      WHERE game_rooms.id = game_states.room_id 
-      AND game_rooms.host_id = auth.uid()
-    )
-  );
-
--- Hand history: Viewable by participants
-CREATE POLICY "Hand history is viewable by everyone" 
-  ON hand_history FOR SELECT USING (true);
-
--- Chat messages: Viewable by room participants
-CREATE POLICY "Chat messages are viewable by everyone" 
-  ON chat_messages FOR SELECT USING (true);
-
-CREATE POLICY "Users can send messages" 
-  ON chat_messages FOR INSERT WITH CHECK (auth.uid() = user_id);
-
--- User preferences: Private to user
-CREATE POLICY "Users can view own preferences" 
-  ON user_preferences FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Users can update own preferences" 
-  ON user_preferences FOR ALL USING (auth.uid() = user_id);
-
--- Tournaments: Viewable by everyone
 CREATE POLICY "Tournaments are viewable by everyone" 
   ON tournaments FOR SELECT USING (true);
 
@@ -248,7 +268,21 @@ CREATE POLICY "Users can create tournaments"
 CREATE POLICY "Host can update their tournaments" 
   ON tournaments FOR UPDATE USING (auth.uid() = host_id);
 
--- Functions
+-- ============================================
+-- INDEXES FOR PERFORMANCE
+-- ============================================
+CREATE INDEX IF NOT EXISTS idx_game_rooms_status ON game_rooms(status);
+CREATE INDEX IF NOT EXISTS idx_game_rooms_host ON game_rooms(host_id);
+CREATE INDEX IF NOT EXISTS idx_game_states_room ON game_states(room_id);
+CREATE INDEX IF NOT EXISTS idx_hand_history_game ON hand_history(game_id);
+CREATE INDEX IF NOT EXISTS idx_hand_history_room ON hand_history(room_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_room ON chat_messages(room_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestamp);
+CREATE INDEX IF NOT EXISTS idx_player_stats_username ON player_stats(username);
+
+-- ============================================
+-- FUNCTIONS
+-- ============================================
 
 -- Update timestamps automatically
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -260,22 +294,27 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Create triggers for updated_at
+DROP TRIGGER IF EXISTS update_profiles_updated_at ON profiles;
 CREATE TRIGGER update_profiles_updated_at 
   BEFORE UPDATE ON profiles 
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_player_stats_updated_at ON player_stats;
 CREATE TRIGGER update_player_stats_updated_at 
   BEFORE UPDATE ON player_stats 
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_game_rooms_updated_at ON game_rooms;
 CREATE TRIGGER update_game_rooms_updated_at 
   BEFORE UPDATE ON game_rooms 
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_game_states_updated_at ON game_states;
 CREATE TRIGGER update_game_states_updated_at 
   BEFORE UPDATE ON game_states 
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_user_preferences_updated_at ON user_preferences;
 CREATE TRIGGER update_user_preferences_updated_at 
   BEFORE UPDATE ON user_preferences 
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -284,32 +323,55 @@ CREATE TRIGGER update_user_preferences_updated_at
 CREATE OR REPLACE FUNCTION create_player_stats()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- Create profile
+  INSERT INTO profiles (id, username, avatar_url)
+  VALUES (NEW.id, NEW.raw_user_meta_data->>'username', NEW.raw_user_meta_data->>'avatar_url')
+  ON CONFLICT (id) DO NOTHING;
+  
+  -- Create player stats
   INSERT INTO player_stats (user_id, username, avatar_url)
-  VALUES (NEW.id, NEW.raw_user_meta_data->>'username', NEW.raw_user_meta_data->>'avatar_url');
+  VALUES (NEW.id, NEW.raw_user_meta_data->>'username', NEW.raw_user_meta_data->>'avatar_url')
+  ON CONFLICT (user_id) DO NOTHING;
   
+  -- Create user preferences
   INSERT INTO user_preferences (user_id)
-  VALUES (NEW.id);
+  VALUES (NEW.id)
+  ON CONFLICT (user_id) DO NOTHING;
   
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  -- Log error but don't prevent signup
+  RAISE WARNING 'Error in create_player_stats: %', SQLERRM;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Trigger to create player stats on signup
+-- Drop existing trigger if exists
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+
+-- Create trigger for new users
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION create_player_stats();
 
--- Realtime subscriptions
-BEGIN;
-  -- Drop the publication if it exists
-  DROP PUBLICATION IF EXISTS supabase_realtime;
-  
-  -- Create a new publication
-  CREATE PUBLICATION supabase_realtime;
-  
-  -- Add tables to the publication
-  ALTER PUBLICATION supabase_realtime ADD TABLE game_rooms;
-  ALTER PUBLICATION supabase_realtime ADD TABLE game_states;
-  ALTER PUBLICATION supabase_realtime ADD TABLE chat_messages;
-  ALTER PUBLICATION supabase_realtime ADD TABLE player_stats;
-COMMIT;
+-- ============================================
+-- REALTIME CONFIGURATION
+-- ============================================
+-- Drop existing publication if exists
+DROP PUBLICATION IF EXISTS supabase_realtime;
+
+-- Create new publication
+CREATE PUBLICATION supabase_realtime;
+
+-- Add tables to publication
+ALTER PUBLICATION supabase_realtime ADD TABLE game_rooms;
+ALTER PUBLICATION supabase_realtime ADD TABLE game_states;
+ALTER PUBLICATION supabase_realtime ADD TABLE chat_messages;
+ALTER PUBLICATION supabase_realtime ADD TABLE player_stats;
+
+-- ============================================
+-- VERIFICATION QUERY (run this to check setup)
+-- ============================================
+-- SELECT * FROM information_schema.tables 
+-- WHERE table_schema = 'public' 
+-- ORDER BY table_name;

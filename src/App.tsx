@@ -11,11 +11,12 @@ import { PokerTable } from '@/components/poker/PokerTable';
 import { ActionButtons } from '@/components/poker/ActionButtons';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useGameStore } from '@/stores/gameStore';
-import { supabase } from '@/lib/supabase/client';
+import { supabase, checkSupabaseConnection } from '@/lib/supabase/client';
 import type { PlayerAction, PlayerStats, GameRoom } from '@/types/poker/game';
 import { createNewGame, processAction } from '@/utils/poker/gameState';
-import { SparklesIcon, ChipIcon, TrophyIcon, TrendingUpIcon } from '@/components/ui/custom/PokerIcons';
+import { SparklesIcon, ChipIcon, TrophyIcon, TrendingUpIcon, AlertTriangleIcon } from '@/components/ui/custom/PokerIcons';
 import './App.css';
 
 type View = 'lobby' | 'game' | 'dashboard' | 'settings';
@@ -26,6 +27,8 @@ function App() {
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [createRoomOpen, setCreateRoomOpen] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [dbError, setDbError] = useState<string | null>(null);
   
   const { 
     isAuthenticated, 
@@ -41,92 +44,136 @@ function App() {
     setPlayerStats,
     setAuth,
   } = useGameStore();
-  
-  // Check for existing session on mount
+
+  // Check Supabase configuration on mount
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        setAuth(
-          session.user.id,
-          session.user.user_metadata?.username || session.user.email?.split('@')[0] || 'Player',
-          session.user.user_metadata?.avatar_url
-        );
-        
-        // Load player stats
-        const { data: stats } = await supabase
-          .from('player_stats')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .single();
-        
-        if (stats) {
-          const s = stats as any;
-          const playerStatsData: PlayerStats = {
-            userId: s.user_id,
-            username: s.username,
-            avatarUrl: s.avatar_url,
-            totalHands: s.total_hands || 0,
-            handsWon: s.hands_won || 0,
-            handsFolded: s.hands_folded || 0,
-            totalBets: s.total_bets || 0,
-            totalWinnings: s.total_winnings || 0,
-            totalLosses: s.total_losses || 0,
-            netProfit: s.net_profit || 0,
-            biggestPotWon: s.biggest_pot_won || 0,
-            bestHand: s.best_hand,
-            vpip: s.vpip || 0,
-            pfr: s.pfr || 0,
-            af: s.af || 0,
-            bbPer100: s.bb_per_100 || 0,
-            winRate: s.win_rate || 0,
-            currentStreak: s.current_streak || 0,
-            longestWinStreak: s.longest_win_streak || 0,
-            tournamentWins: s.tournament_wins || 0,
-            cashGameHours: s.cash_game_hours || 0,
-            lastPlayedAt: s.last_played_at ? new Date(s.last_played_at).getTime() : Date.now(),
-            createdAt: new Date(s.created_at).getTime(),
-            updatedAt: new Date(s.updated_at).getTime(),
-          };
-          setPlayerStats(playerStatsData);
-        }
+    const checkConfig = async () => {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        setConfigError('Missing Supabase configuration. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file');
+        setIsInitializing(false);
+        return;
       }
+
+      // Test connection
+      const { connected, error } = await checkSupabaseConnection();
+      if (!connected) {
+        console.error('Supabase connection failed:', error);
+        setDbError('Cannot connect to database. Please check your Supabase configuration and ensure the database schema is set up.');
+      }
+
       setIsInitializing(false);
+    };
+
+    checkConfig();
+  }, []);
+  
+  // Check for existing session
+  useEffect(() => {
+    if (configError || dbError) return;
+
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          setAuth(
+            session.user.id,
+            session.user.user_metadata?.username || session.user.email?.split('@')[0] || 'Player',
+            session.user.user_metadata?.avatar_url
+          );
+          
+          // Load player stats
+          const { data: stats, error } = await supabase
+            .from('player_stats')
+            .select('*')
+            .eq('user_id', session.user.id)
+            .single();
+          
+          if (error) {
+            console.error('Error loading player stats:', error);
+            // Stats might not exist yet, that's ok
+          }
+          
+          if (stats) {
+            const s = stats as any;
+            const playerStatsData: PlayerStats = {
+              userId: s.user_id,
+              username: s.username,
+              avatarUrl: s.avatar_url,
+              totalHands: s.total_hands || 0,
+              handsWon: s.hands_won || 0,
+              handsFolded: s.hands_folded || 0,
+              totalBets: s.total_bets || 0,
+              totalWinnings: s.total_winnings || 0,
+              totalLosses: s.total_losses || 0,
+              netProfit: s.net_profit || 0,
+              biggestPotWon: s.biggest_pot_won || 0,
+              bestHand: s.best_hand,
+              vpip: s.vpip || 0,
+              pfr: s.pfr || 0,
+              af: s.af || 0,
+              bbPer100: s.bb_per_100 || 0,
+              winRate: s.win_rate || 0,
+              currentStreak: s.current_streak || 0,
+              longestWinStreak: s.longest_win_streak || 0,
+              tournamentWins: s.tournament_wins || 0,
+              cashGameHours: s.cash_game_hours || 0,
+              lastPlayedAt: s.last_played_at ? new Date(s.last_played_at).getTime() : Date.now(),
+              createdAt: new Date(s.created_at).getTime(),
+              updatedAt: new Date(s.updated_at).getTime(),
+            };
+            setPlayerStats(playerStatsData);
+          }
+        }
+      } catch (err) {
+        console.error('Session check error:', err);
+      }
     };
     
     checkSession();
-  }, [setAuth, setPlayerStats]);
+  }, [configError, dbError, setAuth, setPlayerStats]);
   
   // Load rooms
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || configError || dbError) return;
     
     const loadRooms = async () => {
-      const { data } = await supabase
-        .from('game_rooms')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
-      if (data) {
-        setRooms(data.map((r: any) => ({
-          id: r.id,
-          name: r.name,
-          description: r.description,
-          hostId: r.host_id,
-          hostName: r.host_name,
-          smallBlind: r.small_blind,
-          bigBlind: r.big_blind,
-          ante: r.ante,
-          minBuyIn: r.min_buy_in,
-          maxBuyIn: r.max_buy_in,
-          maxPlayers: r.max_players,
-          currentPlayers: r.current_players,
-          isPrivate: r.is_private,
-          password: r.password,
-          status: r.status,
-          createdAt: new Date(r.created_at).getTime(),
-          updatedAt: new Date(r.updated_at).getTime(),
-        })));
+      try {
+        const { data, error } = await supabase
+          .from('game_rooms')
+          .select('*')
+          .order('created_at', { ascending: false });
+        
+        if (error) {
+          console.error('Error loading rooms:', error);
+          return;
+        }
+        
+        if (data) {
+          setRooms(data.map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            description: r.description,
+            hostId: r.host_id,
+            hostName: r.host_name,
+            smallBlind: r.small_blind,
+            bigBlind: r.big_blind,
+            ante: r.ante,
+            minBuyIn: r.min_buy_in,
+            maxBuyIn: r.max_buy_in,
+            maxPlayers: r.max_players,
+            currentPlayers: r.current_players,
+            isPrivate: r.is_private,
+            password: r.password,
+            status: r.status,
+            createdAt: new Date(r.created_at).getTime(),
+            updatedAt: new Date(r.updated_at).getTime(),
+          })));
+        }
+      } catch (err) {
+        console.error('Load rooms error:', err);
       }
     };
     
@@ -144,59 +191,68 @@ function App() {
     return () => {
       subscription.unsubscribe();
     };
-  }, [isAuthenticated, setRooms]);
+  }, [isAuthenticated, configError, dbError, setRooms]);
   
   const handleCreateRoom = async (roomData: RoomFormData) => {
     if (!userId || !username) return;
     
-    const insertData = {
-      name: roomData.name,
-      description: roomData.description,
-      host_id: userId,
-      host_name: username,
-      small_blind: roomData.smallBlind,
-      big_blind: roomData.bigBlind,
-      ante: roomData.ante,
-      min_buy_in: roomData.minBuyIn,
-      max_buy_in: roomData.maxBuyIn,
-      max_players: roomData.maxPlayers,
-      is_private: roomData.isPrivate,
-      password: roomData.isPrivate ? roomData.password : null,
-      status: 'waiting' as const,
-    };
-    
-    const { data, error } = await supabase
-      .from('game_rooms')
-      .insert(insertData as any)
-      .select()
-      .single();
-    
-    if (data && !error) {
-      const d = data as any;
-      const newRoom: GameRoom = {
-        id: d.id,
-        name: d.name,
-        description: d.description,
-        hostId: d.host_id,
-        hostName: d.host_name,
-        smallBlind: d.small_blind,
-        bigBlind: d.big_blind,
-        ante: d.ante,
-        minBuyIn: d.min_buy_in,
-        maxBuyIn: d.max_buy_in,
-        maxPlayers: d.max_players,
-        currentPlayers: d.current_players,
-        isPrivate: d.is_private,
-        password: d.password,
-        status: d.status,
-        createdAt: new Date(d.created_at).getTime(),
-        updatedAt: new Date(d.updated_at).getTime(),
+    try {
+      const insertData = {
+        name: roomData.name,
+        description: roomData.description,
+        host_id: userId,
+        host_name: username,
+        small_blind: roomData.smallBlind,
+        big_blind: roomData.bigBlind,
+        ante: roomData.ante,
+        min_buy_in: roomData.minBuyIn,
+        max_buy_in: roomData.maxBuyIn,
+        max_players: roomData.maxPlayers,
+        is_private: roomData.isPrivate,
+        password: roomData.isPrivate ? roomData.password : null,
+        status: 'waiting' as const,
       };
       
-      setRooms([newRoom, ...rooms]);
+      const { data, error } = await supabase
+        .from('game_rooms')
+        .insert(insertData as any)
+        .select()
+        .single();
       
-      // Auto join the room
-      handleJoinRoom(d.id, roomData.isPrivate ? roomData.password : undefined);
+      if (error) {
+        console.error('Create room error:', error);
+        alert('Failed to create room: ' + error.message);
+        return;
+      }
+      
+      if (data) {
+        const d = data as any;
+        const newRoom: GameRoom = {
+          id: d.id,
+          name: d.name,
+          description: d.description,
+          hostId: d.host_id,
+          hostName: d.host_name,
+          smallBlind: d.small_blind,
+          bigBlind: d.big_blind,
+          ante: d.ante,
+          minBuyIn: d.min_buy_in,
+          maxBuyIn: d.max_buy_in,
+          maxPlayers: d.max_players,
+          currentPlayers: d.current_players,
+          isPrivate: d.is_private,
+          password: d.password,
+          status: d.status,
+          createdAt: new Date(d.created_at).getTime(),
+          updatedAt: new Date(d.updated_at).getTime(),
+        };
+        
+        setRooms([newRoom, ...rooms]);
+        handleJoinRoom(d.id, roomData.isPrivate ? roomData.password : undefined);
+      }
+    } catch (err) {
+      console.error('Create room error:', err);
+      alert('Failed to create room. Please try again.');
     }
   };
   
@@ -212,7 +268,7 @@ function App() {
     
     setCurrentRoom(room);
     
-    // Create a new game or join existing
+    // Create a new game with demo players
     const mockPlayers = [{
       id: userId,
       userId,
@@ -233,7 +289,7 @@ function App() {
       showCards: false,
     }];
     
-    // Add some AI players for demo
+    // Add AI players for demo
     for (let i = 1; i < 4; i++) {
       mockPlayers.push({
         id: `ai-${i}`,
@@ -284,6 +340,66 @@ function App() {
     setCurrentRoom(null);
     setCurrentView('lobby');
   };
+
+  // Configuration error screen
+  if (configError) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+        <div className="max-w-md w-full">
+          <Alert variant="destructive" className="mb-4">
+            <AlertTriangleIcon className="w-5 h-5" />
+            <AlertDescription>{configError}</AlertDescription>
+          </Alert>
+          <Card className="bg-gray-900 border-gray-700">
+            <CardContent className="p-6">
+              <h2 className="text-xl font-bold text-white mb-4">Setup Required</h2>
+              <ol className="text-gray-400 space-y-2 list-decimal list-inside">
+                <li>Create a <code className="bg-gray-800 px-1 rounded">.env</code> file in your project root</li>
+                <li>Add your Supabase credentials:</li>
+              </ol>
+              <pre className="bg-gray-800 p-3 rounded mt-3 text-sm text-gray-300 overflow-x-auto">
+{`VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key_here`}
+              </pre>
+              <p className="text-gray-500 mt-4 text-sm">
+                Get these values from your Supabase project: Settings → API
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // Database error screen
+  if (dbError) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+        <div className="max-w-md w-full">
+          <Alert variant="destructive" className="mb-4">
+            <AlertTriangleIcon className="w-5 h-5" />
+            <AlertDescription>{dbError}</AlertDescription>
+          </Alert>
+          <Card className="bg-gray-900 border-gray-700">
+            <CardContent className="p-6">
+              <h2 className="text-xl font-bold text-white mb-4">Database Setup Required</h2>
+              <ol className="text-gray-400 space-y-2 list-decimal list-inside">
+                <li>Go to your Supabase project</li>
+                <li>Open SQL Editor</li>
+                <li>Run the schema from <code className="bg-gray-800 px-1 rounded">supabase/schema.sql</code></li>
+              </ol>
+              <Button 
+                onClick={() => window.location.reload()} 
+                className="w-full mt-4 bg-blue-600 hover:bg-blue-700"
+              >
+                Retry Connection
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
   
   // Loading screen
   if (isInitializing) {

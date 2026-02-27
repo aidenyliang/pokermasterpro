@@ -50,7 +50,7 @@ export const RegisterForm = ({ onToggleMode }: RegisterFormProps) => {
         return;
       }
       
-      if (data.user) {
+      if (data?.user) {
         setSuccess(true);
         setAuth(
           data.user.id,
